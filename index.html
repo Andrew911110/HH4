@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>條碼單一比對 & 產品庫管理系統 (EAN-13 專用高速優化版)</title>
+  <script src="https://unpkg.com/html5-qrcode"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background: #0f172a; color: #f8fafc; padding: 16px; min-height: 100vh; display: flex; flex-direction: column; gap: 16px; max-width: 600px; margin: 0 auto; }
+
+    /* 卡片與容器 */
+    .section-title { font-size: 1.05rem; font-weight: 700; color: #38bdf8; display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+    .card { background: #1e293b; border-radius: 16px; padding: 16px; display: flex; flex-direction: column; gap: 12px; border: 1px solid #334155; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3); }
+    
+    label { font-size: 0.85rem; color: #94a3b8; font-weight: 600; }
+    .input-row { display: flex; gap: 8px; }
+    input[type="text"], textarea {
+      flex: 1; background: #0f172a; border: 1px solid #475569; color: #fff;
+      padding: 12px; border-radius: 10px; font-size: 1rem; outline: none; transition: border-color 0.2s;
+    }
+    input[type="text"]:focus, textarea:focus { border-color: #38bdf8; }
+    input::placeholder, textarea::placeholder { color: #64748b; }
+    textarea { resize: vertical; font-family: inherit; }
+    .code-val { color: #38bdf8; font-weight: 700; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+    /* 按鈕樣式 */
+    .btn {
+      width: 100%; padding: 14px; font-size: 1rem; font-weight: 700; color: #fff;
+      background: #2563eb; border: none; border-radius: 12px; cursor: pointer; display: flex;
+      justify-content: center; align-items: center; gap: 6px; transition: opacity 0.2s, background-color 0.2s;
+    }
+    .btn:active { opacity: 0.8; }
+    .btn:disabled { background: #475569; opacity: 0.5; cursor: not-allowed; }
+    .btn-green { background: #059669; }
+    .btn-green:not(:disabled):hover { background: #10b981; }
+    .btn-sub { background: #334155; color: #38bdf8; padding: 10px 14px; border: 1px solid #475569; border-radius: 8px; cursor: pointer; font-weight: 700; white-space: nowrap; }
+    .btn-reset { background: #334155; color: #94a3b8; padding: 10px 14px; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; }
+    .btn-row { display: flex; gap: 8px; }
+
+    /* 全屏相機掃描覆蓋層 */
+    #reader-wrapper {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; width: 100vw; height: 100vh;
+      background: #000; z-index: 99999;
+      flex-direction: column; justify-content: center; align-items: center;
+    }
+    #reader { width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; }
+    #reader video { object-fit: cover !important; width: 100% !important; height: 100% !important; }
+    .scan-header {
+      position: absolute; top: 20px; left: 0; right: 0; z-index: 100000;
+      display: flex; justify-content: space-between; align-items: center; padding: 0 20px;
+    }
+    .scan-tip {
+      color: #fff; background: rgba(15, 23, 42, 0.75); padding: 8px 16px;
+      border-radius: 20px; font-size: 0.9rem; font-weight: 600; backdrop-filter: blur(4px);
+    }
+    .btn-close-cam {
+      background: rgba(239, 68, 68, 0.9); color: white; border: none;
+      padding: 10px 18px; border-radius: 20px; font-weight: bold; font-size: 0.95rem; cursor: pointer;
+    }
+
+    /* 比對結果顯示卡片 */
+    .status-box {
+      min-height: 240px; border-radius: 16px; padding: 20px; text-align: center;
+      display: flex; flex-direction: column; justify-content: center; align-items: center;
+      background: #0f172a; border: 2px solid #334155; transition: all 0.2s ease; gap: 10px;
+    }
+    .status-title { font-size: 2rem; font-weight: 900; }
+    .product-name-disp { font-size: 1.3rem; font-weight: 700; color: #fde047; word-break: break-all; white-space: pre-wrap; }
+    .status-code { font-size: 0.95rem; opacity: 0.85; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
+
+    .status-box.pass { background: #064e3b; border-color: #10b981; color: #34d399; }
+    .status-box.pass .product-name-disp { color: #fef08a; }
+    .status-box.fail { background: #7f1d1d; border-color: #ef4444; color: #fca5a5; }
+    .status-box.fail .product-name-disp { color: #fca5a5; }
+
+    /* 設定選項開關 */
+    .settings-row { display: flex; justify-content: space-between; align-items: center; font-size: 0.9rem; color: #cbd5e1; background: #0f172a; padding: 10px 14px; border-radius: 10px; border: 1px solid #334155; }
+    .switch { position: relative; display: inline-block; width: 44px; height: 24px; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #475569; transition: .3s; border-radius: 24px; }
+    .slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px; background-color: white; transition: .3s; border-radius: 50%; }
+    input:checked + .slider { background-color: #2563eb; }
+    input:checked + .slider:before { transform: translateX(20px); }
+
+    /* 列表共用樣式 */
+    .list-container { max-height: 200px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+    .list-item {
+      display: flex; justify-content: space-between; align-items: flex-start;
+      background: #334155; padding: 10px 12px; border-radius: 8px; font-size: 0.9rem;
+    }
+    .list-item div { white-space: pre-wrap; word-break: break-all; }
+    .del-btn { color: #ef4444; background: transparent; border: none; font-size: 1.1rem; cursor: pointer; padding: 2px 6px; }
+    
+    hr { border: none; border-top: 1px solid #334155; margin: 4px 0; }
+  </style>
+</head>
+<body>
+
+  <!-- 全屏相機畫面 -->
+  <div id="reader-wrapper">
+    <div class="scan-header">
+      <span class="scan-tip" id="scanTip">請將 EAN-13 條碼對準掃描框</span>
+      <button class="btn-close-cam" onclick="stopScan()">✕ 關閉</button>
+    </div>
+    <div id="reader"></div>
+  </div>
+
+  <!-- ==================== 區塊一：單一條碼比對 ==================== -->
+  <div class="card">
+    <div class="section-title">
+      <span>🔍 單一條碼比對</span>
+    </div>
+    
+    <!-- 基準碼設定 -->
+    <div style="display: flex; flex-direction: column; gap: 6px;">
+      <label>1. 設定基準條碼</label>
+      <div class="input-row">
+        <input type="text" id="masterCode" class="code-val" placeholder="請點擊右側或下方掃描" readonly>
+        <button class="btn-reset" onclick="resetMaster()">重設</button>
+      </div>
+      <button class="btn" onclick="startScan('master')">📷 掃描設定基準碼</button>
+    </div>
+
+    <hr>
+
+    <!-- 輔助設定：音效開關 -->
+    <div class="settings-row">
+      <span>🔊 啟用提示音與震動</span>
+      <label class="switch">
+        <input type="checkbox" id="soundEnabled" checked>
+        <span class="slider"></span>
+      </label>
+    </div>
+
+    <!-- 待測碼按鈕 -->
+    <div style="display: flex; flex-direction: column; gap: 6px;">
+      <label>2. 掃描待測商品</label>
+      <button id="btnCheck" class="btn btn-green" onclick="startScan('check')" disabled>🔍 掃描待測條碼比對</button>
+    </div>
+
+    <!-- 比對結果顯示卡片 -->
+    <div id="statusBox" class="status-box">
+      <div id="statusTitle" class="status-title">準備就緒</div>
+      <div id="productDisp" class="product-name-disp"></div>
+      <div id="statusCode" class="status-code">請先設定基準條碼</div>
+    </div>
+  </div>
+
+  <!-- ==================== 區塊二：比對歷史紀錄 ==================== -->
+  <div class="card">
+    <div class="section-title">
+      <span>📋 近期比對紀錄</span>
+      <button class="btn-reset" style="padding: 2px 6px; font-size: 0.75rem;" onclick="clearHistory()">清除紀錄</button>
+    </div>
+    <div class="list-container" id="historyList">
+      <div style="color:#64748b; text-align:center; padding:12px; font-size:0.85rem;">尚無比對紀錄</div>
+    </div>
+  </div>
+
+  <!-- ==================== 區塊三：產品庫管理 ==================== -->
+  <div class="card">
+    <div class="section-title">
+      <span>📦 產品庫管理</span>
+      <div style="display: flex; gap: 4px;">
+        <button class="btn-sub" style="padding: 4px 8px; font-size: 0.8rem;" onclick="exportDb()">匯出</button>
+        <label class="btn-sub" style="padding: 4px 8px; font-size: 0.8rem; cursor: pointer; margin:0;">
+          匯入 <input type="file" id="importFile" accept=".json" style="display:none" onchange="importDb(event)">
+        </label>
+      </div>
+    </div>
+    
+    <!-- 掃描建檔區 -->
+    <div style="display: flex; flex-direction: column; gap: 8px; background: #0f172a; padding: 12px; border-radius: 12px; border: 1px solid #334155;">
+      <label>➕ 建立新產品資料</label>
+      <div class="input-row">
+        <input type="text" id="enrollCode" class="code-val" placeholder="條碼 (請點掃條碼)" readonly>
+        <button class="btn-sub" onclick="startScan('enroll')">📷 掃條碼</button>
+      </div>
+      <div class="input-row">
+        <textarea id="enrollName" rows="3" placeholder="輸入產品名稱 (支援換行)"></textarea>
+      </div>
+      <button class="btn" style="background: #8b5cf6;" onclick="saveToDbFromForm()">💾 儲存至產品庫</button>
+    </div>
+
+    <!-- 產品庫清單 -->
+    <div>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <label>已儲存產品庫 (<span id="dbCount">0</span>)</label>
+        <button class="btn-reset" style="color:#ef4444; padding:4px 8px; font-size:0.8rem;" onclick="clearProductDb()">清空全部</button>
+      </div>
+      <div class="list-container" id="productList"></div>
+    </div>
+  </div>
+
+  <script>
+    let html5QrCode = null;
+    let scanMode = ''; 
+    let scanHistory = [];
+
+    function getDb() {
+      try { return JSON.parse(localStorage.getItem('barcode_db') || '{}'); } catch (e) { return {}; }
+    }
+
+    function saveDb(db) {
+      localStorage.setItem('barcode_db', JSON.stringify(db));
+      renderDbList();
+    }
+
+    function renderDbList() {
+      const db = getDb();
+      const keys = Object.keys(db);
+      document.getElementById('dbCount').textContent = keys.length;
+      const listDiv = document.getElementById('productList');
+      
+      if (keys.length === 0) {
+        listDiv.innerHTML = '<div style="color:#64748b; text-align:center; padding:12px; font-size:0.85rem;">目前產品庫無資料</div>';
+        return;
+      }
+
+      listDiv.innerHTML = keys.map(k => `
+        <div class="list-item">
+          <div style="flex: 1; padding-right:8px;">
+            <div style="font-weight:bold; color:#fff;">${escapeHtml(db[k])}</div>
+            <div style="font-family:monospace; color:#38bdf8; font-size:0.8rem;">${escapeHtml(k)}</div>
+          </div>
+          <button class="del-btn" onclick="deleteItem('${escapeHtml(k)}')" title="刪除">🗑️</button>
+        </div>
+      `).join('');
+    }
+
+    function renderHistoryList() {
+      const listDiv = document.getElementById('historyList');
+      if (scanHistory.length === 0) {
+        listDiv.innerHTML = '<div style="color:#64748b; text-align:center; padding:12px; font-size:0.85rem;">尚無比對紀錄</div>';
+        return;
+      }
+
+      listDiv.innerHTML = scanHistory.map(item => `
+        <div class="list-item" style="border-left: 4px solid ${item.isMatch ? '#10b981' : '#ef4444'};">
+          <div style="flex: 1;">
+            <div style="font-weight:bold; color:${item.isMatch ? '#34d399' : '#fca5a5'};">${item.statusText} - ${escapeHtml(item.prodName)}</div>
+            <div style="font-family:monospace; color:#94a3b8; font-size:0.75rem;">條碼: ${escapeHtml(item.code)} | ${item.time}</div>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function addHistory(isMatch, statusText, prodName, code) {
+      const now = new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      scanHistory.unshift({ isMatch, statusText, prodName, code, time: now });
+      if (scanHistory.length > 20) scanHistory.pop();
+      renderHistoryList();
+    }
+
+    function clearHistory() {
+      scanHistory = [];
+      renderHistoryList();
+    }
+
+    function escapeHtml(str) {
+      return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+    }
+
+    function deleteItem(code) {
+      const db = getDb();
+      delete db[code];
+      saveDb(db);
+    }
+
+    function clearProductDb() {
+      if (confirm('確定要清空產品庫中的所有紀錄嗎？')) {
+        localStorage.removeItem('barcode_db');
+        renderDbList();
+      }
+    }
+
+    function exportDb() {
+      const db = getDb();
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(db, null, 2));
+      const downloadAnchor = document.createElement('a');
+      downloadAnchor.setAttribute("href", dataStr);
+      downloadAnchor.setAttribute("download", `barcode_db_${new Date().toISOString().slice(0,10)}.json`);
+      document.body.appendChild(downloadAnchor);
+      downloadAnchor.click();
+      downloadAnchor.remove();
+    }
+
+    function importDb(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        try {
+          const imported = JSON.parse(e.target.result);
+          if (typeof imported === 'object' && imported !== null) {
+            const currentDb = getDb();
+            const merged = { ...currentDb, ...imported };
+            saveDb(merged);
+            alert(`✅ 成功匯入產品資料！目前總筆數：${Object.keys(merged).length}`);
+          } else {
+            alert('❌ 檔案格式錯誤');
+          }
+        } catch(err) {
+          alert('❌ 解析 JSON 檔案失敗');
+        }
+        event.target.value = '';
+      };
+      reader.readAsText(file);
+    }
+
+    function saveToDbFromForm() {
+      const code = document.getElementById('enrollCode').value.trim();
+      const name = document.getElementById('enrollName').value.trim();
+      if (!code) { alert('請先點擊「📷 掃條碼」取得產品條碼！'); return; }
+      if (!name) { alert('請輸入產品名稱！'); return; }
+
+      const db = getDb();
+      db[code] = name;
+      saveDb(db);
+      alert(`✅ 成功儲存至產品庫：\n【${name}】\n條碼：${code}`);
+      document.getElementById('enrollCode').value = '';
+      document.getElementById('enrollName').value = '';
+    }
+
+    function playAudioAndVibrate(type) {
+      if (!document.getElementById('soundEnabled').checked) return;
+
+      if (navigator.vibrate) {
+        navigator.vibrate(type === 'pass' ? 100 : [100, 50, 100]);
+      }
+
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = ctx.createOscillator();
+        const g = ctx.createGain();
+        osc.connect(g);
+        g.connect(ctx.destination);
+
+        if (type === 'pass') {
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(800, ctx.currentTime);
+          g.gain.setValueAtTime(0.15, ctx.currentTime);
+          osc.start();
+          osc.stop(ctx.currentTime + 0.12);
+        } else {
+          osc.type = 'sawtooth';
+          osc.frequency.setValueAtTime(180, ctx.currentTime);
+          g.gain.setValueAtTime(0.25, ctx.currentTime);
+          osc.start();
+          osc.stop(ctx.currentTime + 0.35);
+        }
+      } catch(e) {}
+    }
+
+    async function startScan(mode) {
+      scanMode = mode;
+      await stopScan();
+
+      const wrapper = document.getElementById('reader-wrapper');
+      const tip = document.getElementById('scanTip');
+
+      if (mode === 'master') tip.textContent = '📷 請掃描 EAN-13 基準條碼';
+      else if (mode === 'check') tip.textContent = '🔍 請掃描 EAN-13 待測條碼比對';
+      else if (mode === 'enroll') tip.textContent = '📦 請掃描 EAN-13 建檔條碼';
+
+      wrapper.style.display = 'flex';
+      html5QrCode = new Html5Qrcode("reader");
+      
+      // 設定只針對 EAN-13 進行解碼，並提升 FPS 與相機解像力以加快速度
+      const config = { 
+        fps: 30, // 提升至每秒 30 影格，加快判讀頻率
+        qrbox: (vw, vh) => {
+          const minEdge = Math.min(vw, vh);
+          return { width: Math.floor(minEdge * 0.85), height: Math.floor(minEdge * 0.5) };
+        },
+        aspectRatio: 1.777778,
+        formatsToSupport: [ Html5QrcodeSupportedFormats.EAN_13 ] // 【關鍵】限制僅解碼 EAN-13 條碼
+      };
+
+      const constraints = {
+        facingMode: "environment",
+        width: { ideal: 1920 },
+        height: { ideal: 1080 }
+      };
+
+      html5QrCode.start(constraints, config, onScanSuccess).catch(err => {
+        html5QrCode.start({ facingMode: "environment" }, config, onScanSuccess).catch(fallbackErr => {
+          alert('無法開啟相機，請確認已授權權限並於 HTTPS 環境下執行。');
+          wrapper.style.display = 'none';
+        });
+      });
+    }
+
+    async function stopScan() {
+      if (html5QrCode) {
+        try {
+          if (html5QrCode.isScanning) await html5QrCode.stop();
+          html5QrCode.clear();
+        } catch (e) {
+          console.error(e);
+        } finally {
+          html5QrCode = null;
+        }
+      }
+      document.getElementById('reader-wrapper').style.display = 'none';
+    }
+
+    async function onScanSuccess(decodedText) {
+      await stopScan();
+
+      const db = getDb();
+
+      if (scanMode === 'master') {
+        document.getElementById('masterCode').value = decodedText;
+        document.getElementById('btnCheck').disabled = false;
+        const prodName = db[decodedText] || '⚠️ 未建檔商品';
+        updateStatusBox('status-box', '📌 基準碼已設定', prodName, `條碼：${decodedText}`);
+        playAudioAndVibrate('pass');
+      } 
+      else if (scanMode === 'check') {
+        const masterCode = document.getElementById('masterCode').value.trim();
+        const isMatch = (masterCode === decodedText.trim());
+        const prodName = db[decodedText] || '⚠️ 未建檔商品';
+
+        if (isMatch) {
+          updateStatusBox('status-box pass', '✅ PASS 相符', prodName, `條碼：${decodedText}`);
+          playAudioAndVibrate('pass');
+          addHistory(true, 'PASS', prodName, decodedText);
+        } else {
+          updateStatusBox('status-box fail', '❌ FAIL 不符！', prodName, `待測條碼：${decodedText}`);
+          playAudioAndVibrate('fail');
+          addHistory(false, 'FAIL', prodName, decodedText);
+        }
+      } 
+      else if (scanMode === 'enroll') {
+        document.getElementById('enrollCode').value = decodedText;
+        if (db[decodedText]) {
+          document.getElementById('enrollName').value = db[decodedText];
+          alert(`此條碼已存在於產品庫：\n名稱：${db[decodedText]}`);
+        } else {
+          document.getElementById('enrollName').focus();
+        }
+      }
+    }
+
+    function updateStatusBox(className, title, prodName, codeText) {
+      const box = document.getElementById('statusBox');
+      box.className = className;
+      document.getElementById('statusTitle').textContent = title;
+      document.getElementById('productDisp').textContent = prodName;
+      document.getElementById('statusCode').textContent = codeText;
+    }
+
+    function resetMaster() {
+      stopScan();
+      document.getElementById('masterCode').value = '';
+      document.getElementById('btnCheck').disabled = true;
+      updateStatusBox('status-box', '準備就緒', '', '請先設定基準條碼');
+    }
+
+    renderDbList();
+    renderHistoryList();
+  </script>
+</body>
+</html>
